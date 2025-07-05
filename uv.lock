@@ -321,6 +321,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "python-dotenv" },
     { name = "streamlit" },
+    { name = "streamlit-aggrid" },
     { name = "supabase" },
 ]
 
@@ -328,6 +329,7 @@ dependencies = [
 requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "streamlit", specifier = ">=1.46.1" },
+    { name = "streamlit-aggrid", specifier = ">=1.1.6" },
     { name = "supabase", specifier = ">=2.16.0" },
 ]
 
@@ -729,6 +731,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-decouple"
+version = "3.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e1/97/373dcd5844ec0ea5893e13c39a2c67e7537987ad8de3842fe078db4582fa/python-decouple-3.8.tar.gz", hash = "sha256:ba6e2657d4f376ecc46f77a3a615e058d93ba5e465c01bbe57289bfb7cce680f", size = 9612 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/d4/9193206c4563ec771faf2ccf54815ca7918529fe81f6adb22ee6d0e06622/python_decouple-3.8-py3-none-any.whl", hash = "sha256:d0d45340815b25f4de59c974b855bb38d03151d81b037d9e3f463b0c9f8cbd66", size = 9947 },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -932,6 +943,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/bd/7e/c7499c447b7021657fa5c851091072c1c7a26f1dda0369c21c0243fc35e7/streamlit-1.46.1.tar.gz", hash = "sha256:2cc4ad01cfeded9ad953a21829eb879b90aa77af4068c68397411c2d5c8862cf", size = 9651018 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/84/3b/35400175788cdd6a43c90dce1e7f567eb6843a3ba0612508c0f19ee31f5f/streamlit-1.46.1-py3-none-any.whl", hash = "sha256:dffa373230965f87ccc156abaff848d7d731920cf14106f3b99b1ea18076f728", size = 10051346 },
+]
+
+[[package]]
+name = "streamlit-aggrid"
+version = "1.1.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pandas" },
+    { name = "python-decouple" },
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5b/c7/9953e01d5aec28cd95dd399481de27e856a32fc1318f9321fe4665a08e1a/streamlit_aggrid-1.1.6.tar.gz", hash = "sha256:72c1dcfc7a8bc32b1fd34b6d68ed52ed710e849b1eb0a8094af6c1a8fa9fbcdb", size = 5441228 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/c1/e18af5fd1cf236581cdc0f7b63fbc22e2fe1f35a5b1135e664903e0dbb99/streamlit_aggrid-1.1.6-py3-none-any.whl", hash = "sha256:bd48861c656fc24bc24be3038335a500ec9915acd4466ae2eb3e78e5f6e43aa9", size = 5498651 },
 ]
 
 [[package]]

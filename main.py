@@ -61,7 +61,7 @@ def fetch_data():
     """Fetches and merges data from Supabase tables."""
     try:
         logging.info("Fetching data from Supabase...")
-        products_res = supabase.table("products").select("*").execute()
+        products_res = supabase.table("products").select("*").eq("organization_id", "c4f3eed9-de25-4a7a-9664-7674e16b5bfd").execute()
         df_products = pd.DataFrame(products_res.data)
 
         if 'code' not in df_products.columns:
@@ -69,17 +69,21 @@ def fetch_data():
             logging.error("Product table missing 'code' column.")
             return pd.DataFrame()
 
-        config_res = supabase.table("product_availability_config").select("code, start_time, end_time").execute()
+        # Fetch 'code', 'start_time', 'end_time', and 'allow_negative' from product_availability_config
+        config_res = supabase.table("product_availability_config").select("code, start_time, end_time, allow_negative").execute()
         df_config = pd.DataFrame(config_res.data)
 
-        for col in ['start_time', 'end_time']:
+        for col in ['start_time', 'end_time', 'allow_negative']:
             if col not in df_config.columns:
-                df_config[col] = None
+                # Set default for 'allow_negative' to False if not present
+                df_config[col] = None if col in ['start_time', 'end_time'] else False
         
         merged_df = pd.merge(df_products, df_config, on='code', how='left')
         
         merged_df['start_time'] = merged_df['start_time'].apply(format_time_for_editor)
         merged_df['end_time'] = merged_df['end_time'].apply(format_time_for_editor)
+        # Ensure 'allow_negative' is boolean, default to False if None/NaN
+        merged_df['allow_negative'] = merged_df['allow_negative'].fillna(False).astype(bool)
         
         logging.info("Data fetched and processed successfully.")
         return merged_df
@@ -102,7 +106,8 @@ def main_app():
         return
 
     # --- Column Selector ---
-    product_columns = [col for col in st.session_state.original_data.columns if col not in ['start_time', 'end_time']]
+    # Exclude time and boolean columns from initial selection for product columns
+    product_columns = [col for col in st.session_state.original_data.columns if col not in ['start_time', 'end_time', 'allow_negative']]
     
     with st.expander("Display Options"):
         selected_columns = st.multiselect(
@@ -111,8 +116,8 @@ def main_app():
             default=['code', 'name']
         )
 
-    # Always include the time columns
-    display_columns = selected_columns + ['start_time', 'end_time']
+    # Always include the time and allow_negative columns
+    display_columns = selected_columns + ['start_time', 'end_time', 'allow_negative']
 
     edited_df = st.data_editor(
         st.session_state.original_data,
@@ -120,8 +125,9 @@ def main_app():
         column_config={
             "start_time": st.column_config.TimeColumn("Start Time", format="HH:mm"),
             "end_time": st.column_config.TimeColumn("End Time", format="HH:mm"),
+            "allow_negative": st.column_config.CheckboxColumn("Allow Negative", default=False), # Configured as a checkbox/toggle
         },
-        disabled=[col for col in st.session_state.original_data.columns if col not in ['start_time', 'end_time']],
+        disabled=[col for col in st.session_state.original_data.columns if col not in ['start_time', 'end_time', 'allow_negative']],
         hide_index=True,
         use_container_width=True,
         key="data_editor"
@@ -138,38 +144,44 @@ def main_app():
                 product_code = row['code']
                 original_row = original_indexed.loc[product_code]
 
-                if original_row['start_time'] != row['start_time'] or original_row['end_time'] != row['end_time']:
+                # Check for changes in start_time, end_time, or allow_negative
+                if (original_row['start_time'] != row['start_time'] or 
+                    original_row['end_time'] != row['end_time'] or
+                    original_row['allow_negative'] != row['allow_negative']):
+                    
                     updates.append({
                         "code": product_code,
                         "start_time": format_time_for_db(row['start_time']),
-                        "end_time": format_time_for_db(row['end_time'])
+                        "end_time": format_time_for_db(row['end_time']),
+                        "allow_negative": bool(row['allow_negative']) # Ensure it's a boolean
                     })
-                    logging.info(f"Change detected for '{product_code}': Start: {row['start_time']}, End: {row['end_time']}")
+                    logging.info(f"Change detected for '{product_code}': "
+                                 f"Start: {row['start_time']}, End: {row['end_time']}, "
+                                 f"Allow Negative: {row['allow_negative']}")
 
             if updates:
                 try:
                     logging.info(f"Sending {len(updates)} updates to Supabase.")
                     for update in updates:
-                        supabase.table("product_availability_config").update({k: update[k] for k in ["start_time", "end_time"]}).eq("code", update['code']).execute()
+                        # Only include the fields that are part of product_availability_config
+                        update_payload = {k: update[k] for k in ["start_time", "end_time", "allow_negative"]}
+                        supabase.table("product_availability_config").update(update_payload).eq("code", update['code']).execute()
                     st.toast(f"Saved changes for {len(updates)} product(s).", icon="✅")
                     logging.info("Supabase upsert successful.")
-                    st.cache_data.clear()
-                    time.sleep(2) # Wait 2 seconds before rerunning
-                    st.rerun()
+                    
+                    # Update original_data in session state to reflect the saved changes
+                    # This ensures that the next comparison correctly identifies only new changes.
+                    st.session_state.original_data = edited_df.copy()
+
+                    # No st.rerun() here, as the script will naturally rerun after button click
+                    # and the data_editor will be rendered with the updated original_data.
                 except Exception as e:
                     st.toast(f"Error saving to Supabase: {e}", icon="🔥")
                     logging.error(f"Supabase upsert failed: {e}", exc_info=True)
             else:
                 st.toast("No changes to save.", icon="🤷")
-
-    with col2:
-        if st.button("Refresh Data", use_container_width=True):
-            st.cache_data.clear()
-            st.toast("Data refreshed.", icon="🔄")
-            logging.info("Data cache cleared by user.")
-            st.rerun()
             
-    with col3:
+    with col2:
         if st.button("Logout", use_container_width=False):
             logging.info(f"User '{st.session_state.get('username', 'unknown')}' logged out.")
             for key in ['logged_in', 'login_time', 'username']:
@@ -181,21 +193,26 @@ def main_app():
 # --- Login and Session Management ---
 
 def login_page():
-    st.title("Admin Login")
-    username = st.text_input("Username", key="username_input")
-    password = st.text_input("Password", type="password", key="password_input")
+    
+    
+    _, col1, _ = st.columns([1, 1, 1])
 
-    if st.button("Login", key="login_button"):
-        if username == "admin" and password == "admin1234":
-            st.session_state.logged_in = True
-            st.session_state.login_time = datetime.now()
-            st.session_state.username = username
-            st.toast("Logged in successfully!", icon="🎉")
-            logging.info(f"User '{username}' logged in successfully.")
-            st.rerun()
-        else:
-            st.toast("Invalid username or password.", icon="❌")
-            logging.warning(f"Failed login attempt for username: '{username}'.")
+    with col1:
+        st.title("Admin Login")
+        username = st.text_input("Username", key="username_input")
+        password = st.text_input("Password", type="password", key="password_input")
+        
+        if st.button("Login", key="login_button"):
+            if username == "admin" and password == "admin1234":
+                st.session_state.logged_in = True
+                st.session_state.login_time = datetime.now()
+                st.session_state.username = username
+                st.toast("Logged in successfully!", icon="🎉")
+                logging.info(f"User '{username}' logged in successfully.")
+                st.rerun()
+            else:
+                st.toast("Invalid username or password.", icon="❌")
+                logging.warning(f"Failed login attempt for username: '{username}'.")
 
 # --- Page Routing ---
 session_is_active = False
