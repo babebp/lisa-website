@@ -58,9 +58,14 @@ def format_time_for_editor(time_str_from_db):
 
 @st.cache_data(ttl=300)
 def fetch_data():
-    """Fetches and merges data from Supabase tables."""
+    """
+    Fetches data from the 'products' table, including availability configuration.
+    The 'available_from', 'available_to', and 'allow_negative' columns are now expected
+    to be directly on the 'products' table.
+    """
     try:
-        logging.info("Fetching data from Supabase...")
+        logging.info("Fetching data from 'products' table...")
+        # Fetch all columns, assuming available_from, available_to, allow_negative are now in 'products'
         products_res = supabase.table("products").select("*").eq("organization_id", "c4f3eed9-de25-4a7a-9664-7674e16b5bfd").execute()
         df_products = pd.DataFrame(products_res.data)
 
@@ -69,24 +74,22 @@ def fetch_data():
             logging.error("Product table missing 'code' column.")
             return pd.DataFrame()
 
-        # Fetch 'code', 'start_time', 'end_time', and 'allow_negative' from product_availability_config
-        config_res = supabase.table("product_availability_config").select("code, start_time, end_time, allow_negative").execute()
-        df_config = pd.DataFrame(config_res.data)
+        # Ensure the new columns exist, providing defaults if they don't
+        # This is crucial if the columns might not be present in the DB yet
+        for col in ['available_from', 'available_to']:
+            if col not in df_products.columns:
+                df_products[col] = None
+        if 'allow_negative' not in df_products.columns:
+            df_products['allow_negative'] = False # Default to False if column doesn't exist
 
-        for col in ['start_time', 'end_time', 'allow_negative']:
-            if col not in df_config.columns:
-                # Set default for 'allow_negative' to False if not present
-                df_config[col] = None if col in ['start_time', 'end_time'] else False
-        
-        merged_df = pd.merge(df_products, df_config, on='code', how='left')
-        
-        merged_df['start_time'] = merged_df['start_time'].apply(format_time_for_editor)
-        merged_df['end_time'] = merged_df['end_time'].apply(format_time_for_editor)
+        # Apply formatting for editor display
+        df_products['available_from'] = df_products['available_from'].apply(format_time_for_editor)
+        df_products['available_to'] = df_products['available_to'].apply(format_time_for_editor)
         # Ensure 'allow_negative' is boolean, default to False if None/NaN
-        merged_df['allow_negative'] = merged_df['allow_negative'].fillna(False).astype(bool)
+        df_products['allow_negative'] = df_products['allow_negative'].fillna(False).astype(bool)
         
-        logging.info("Data fetched and processed successfully.")
-        return merged_df
+        logging.info("Data fetched and processed successfully from 'products' table.")
+        return df_products
 
     except Exception as e:
         st.toast(f"Error fetching data: {e}", icon="🔥")
@@ -107,7 +110,7 @@ def main_app():
 
     # --- Column Selector ---
     # Exclude time and boolean columns from initial selection for product columns
-    product_columns = [col for col in st.session_state.original_data.columns if col not in ['start_time', 'end_time', 'allow_negative']]
+    product_columns = [col for col in st.session_state.original_data.columns if col not in ['available_from', 'available_to', 'allow_negative']]
     
     with st.expander("Display Options"):
         selected_columns = st.multiselect(
@@ -117,17 +120,18 @@ def main_app():
         )
 
     # Always include the time and allow_negative columns
-    display_columns = selected_columns + ['start_time', 'end_time', 'allow_negative']
+    display_columns = selected_columns + ['available_from', 'available_to', 'allow_negative']
 
     edited_df = st.data_editor(
         st.session_state.original_data,
         column_order=display_columns,
         column_config={
-            "start_time": st.column_config.TimeColumn("Start Time", format="HH:mm"),
-            "end_time": st.column_config.TimeColumn("End Time", format="HH:mm"),
+            "available_from": st.column_config.TimeColumn("Start Time", format="HH:mm"),
+            "available_to": st.column_config.TimeColumn("End Time", format="HH:mm"),
             "allow_negative": st.column_config.CheckboxColumn("Allow Negative", default=False), # Configured as a checkbox/toggle
         },
-        disabled=[col for col in st.session_state.original_data.columns if col not in ['start_time', 'end_time', 'allow_negative']],
+        # Disable all columns except the editable ones
+        disabled=[col for col in st.session_state.original_data.columns if col not in ['available_from', 'available_to', 'allow_negative']],
         hide_index=True,
         use_container_width=True,
         key="data_editor"
@@ -144,40 +148,39 @@ def main_app():
                 product_code = row['code']
                 original_row = original_indexed.loc[product_code]
 
-                # Check for changes in start_time, end_time, or allow_negative
-                if (original_row['start_time'] != row['start_time'] or 
-                    original_row['end_time'] != row['end_time'] or
+                # Check for changes in available_from, available_to, or allow_negative
+                if (original_row['available_from'] != row['available_from'] or 
+                    original_row['available_to'] != row['available_to'] or
                     original_row['allow_negative'] != row['allow_negative']):
                     
                     updates.append({
                         "code": product_code,
-                        "start_time": format_time_for_db(row['start_time']),
-                        "end_time": format_time_for_db(row['end_time']),
+                        "available_from": format_time_for_db(row['available_from']),
+                        "available_to": format_time_for_db(row['available_to']),
                         "allow_negative": bool(row['allow_negative']) # Ensure it's a boolean
                     })
                     logging.info(f"Change detected for '{product_code}': "
-                                 f"Start: {row['start_time']}, End: {row['end_time']}, "
+                                 f"Start: {row['available_from']}, End: {row['available_to']}, "
                                  f"Allow Negative: {row['allow_negative']}")
 
             if updates:
                 try:
-                    logging.info(f"Sending {len(updates)} updates to Supabase.")
+                    logging.info(f"Sending {len(updates)} updates to Supabase (products table).")
                     for update in updates:
-                        # Only include the fields that are part of product_availability_config
-                        update_payload = {k: update[k] for k in ["start_time", "end_time", "allow_negative"]}
-                        supabase.table("product_availability_config").update(update_payload).eq("code", update['code']).execute()
+                        # Update the 'products' table directly
+                        # Only include the fields that are being updated
+                        update_payload = {k: update[k] for k in ["available_from", "available_to", "allow_negative"]}
+                        supabase.table("products").update(update_payload).eq("code", update['code']).execute()
                     st.toast(f"Saved changes for {len(updates)} product(s).", icon="✅")
-                    logging.info("Supabase upsert successful.")
+                    logging.info("Supabase update successful for 'products' table.")
                     
                     # Update original_data in session state to reflect the saved changes
                     # This ensures that the next comparison correctly identifies only new changes.
                     st.session_state.original_data = edited_df.copy()
 
-                    # No st.rerun() here, as the script will naturally rerun after button click
-                    # and the data_editor will be rendered with the updated original_data.
                 except Exception as e:
                     st.toast(f"Error saving to Supabase: {e}", icon="🔥")
-                    logging.error(f"Supabase upsert failed: {e}", exc_info=True)
+                    logging.error(f"Supabase update failed for 'products' table: {e}", exc_info=True)
             else:
                 st.toast("No changes to save.", icon="🤷")
             
@@ -207,7 +210,7 @@ def login_page():
                 st.session_state.logged_in = True
                 st.session_state.login_time = datetime.now()
                 st.session_state.username = username
-                st.toast("Logged in successfully!", icon="🎉")
+                st.toast("Logged in successfully!", icon="✅")
                 logging.info(f"User '{username}' logged in successfully.")
                 st.rerun()
             else:
